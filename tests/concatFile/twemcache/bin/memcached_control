@@ -1,0 +1,170 @@
+#!/bin/bash
+set -e
+trap "echo Fail unexpectedly on line \$LINENO!" ERR
+
+basename=$(basename "$0")
+CONF_FILE=./conf/control.conf
+WORKING_DIR=
+MODIFIER=
+BIN_DIR=./bin
+SUPERVISE=./supervise
+MOD_NAME=${basename%_*}
+SIGNAL_SUP=-SIGTERM
+SIGNAL=-SIGTERM
+PARAMS=
+
+#parse option
+set -- $(getopt f:C: "$@")
+while [ $# -gt 0 ]
+do
+    case "$1" in
+        (-f) CONF_FILE="$2"; shift;;
+        (-C) WORKING_DIR="$2"; shift;;
+        (--) shift; break;;
+        (-*) echo "Unrecognized option $1";;
+        (*)  echo "$1"; break;;
+    esac
+    shift
+done
+
+if [ -z "$WORKING_DIR" ]
+then
+    cd $(dirname "$0")
+    cd ..
+else
+    if [ -d "$WORKING_DIR" ]
+    then
+        cd "$WORKING_DIR"
+    else
+        echo "Directory $WORKING_DIR does not exist!"
+        exit 1
+    fi
+fi
+
+#load conf
+if [ -f "$CONF_FILE" ]
+then
+    . $CONF_FILE
+fi
+
+STATUS_DIR=./status/$MOD_NAME
+STATUS_FILE=$STATUS_DIR/status
+LOCK_FILE=$STATUS_DIR/lock
+SVCONTROL_FILE=$STATUS_DIR/svcontrol
+
+[ -z "$PROG_NAME" ] && PROG_NAME=$BIN_DIR/$MOD_NAME
+
+_message() {
+    echo "$@" >&2
+}
+
+_warning() {
+    _message WARNING: "$@"
+}
+
+is_running() {
+    /sbin/fuser $LOCK_FILE &>/dev/null
+}
+
+get_ppid() {
+    /sbin/fuser $LOCK_FILE 2>/dev/null | awk '{$1=""; print $0}'
+}
+
+get_pid() {
+    od -d --skip-bytes=16 $STATUS_FILE | awk '{print $2}'
+}
+
+_kill() {
+    kill "$@" 2>/dev/null || true
+}
+
+control_start() {
+    if is_running
+    then
+        _warning "$MOD_NAME is already running"
+        exit 1
+    fi
+
+    [ -d "$STATUS_DIR" ] || mkdir -p "$STATUS_DIR"
+    if [ ! -f "$PROG_NAME" ]
+    then
+        _warning "$PROG_NAME does not exist!"
+        exit 1
+    fi
+
+    $SUPERVISE "$STATUS_DIR" $MODIFIER $PROG_NAME $PARAMS &>/dev/null </dev/null &
+    pid=$!
+    sleep 0.1
+    if [ -d /proc/$pid ]
+    then
+        _message "$MOD_NAME start done"
+    else
+        _warning "$MOD_NAME start failed"
+        exit 1
+    fi
+}
+
+control_stop() {
+    if ! is_running
+    then
+        _warning "$MOD_NAME is not running"
+        exit 1
+    fi
+    childpid=$(get_pid)
+    suppid=$(get_ppid)
+    _kill $SIGNAL_SUP $suppid
+    _kill $SIGNAL $childpid
+    sleep 0.3
+    if is_running
+    then
+        _warning "$MOD_NAME stop failed"
+        exit 1
+    else
+        _message "$MOD_NAME stop done"
+        rm $LOCK_FILE $SVCONTROL_FILE
+    fi
+}
+
+control_restart() {
+    if ! is_running
+    then
+        _warning "$MOD_NAME is not running"
+        exit 1
+    fi
+    childpid=$(get_pid)
+    _kill $SIGNAL $childpid
+    _message "$MOD_NAME restart done"
+}
+
+control_check() {
+    if is_running
+    then
+        _message "$MOD_NAME is running"
+    else
+        _message "$MOD_NAME is not running"
+    fi
+}
+
+control_help() {
+    _message "Usage: $(basename "$0") [start|stop|restart|check]"
+}
+
+ACTION=$1
+
+case "X$ACTION" in
+    Xstart)
+        control_start
+        ;;
+    Xrestart)
+        control_restart
+        ;;
+    Xstop)
+        control_stop
+        ;;
+    Xcheck)
+        control_check
+        ;;
+    *)
+        control_help
+        ;;
+esac

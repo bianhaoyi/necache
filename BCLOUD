@@ -1,0 +1,1 @@
+BUILD_SUBMITTER -x -m app/search/ksarch/trunk/store/twemcache -u https://svn.baidu.com/app/search/ksarch/trunk/store/twemcache -c "export PATH=/opt/compiler/gcc-4.8.2/bin:$PATH && cd app/search/ksarch/store/twemcache && autoreconf -fvi && ./configure --enable-debug=full && make && rm -rf output && mkdir -p output/src && cp src/twemcache output/src || true"
